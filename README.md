@@ -22,7 +22,7 @@ Place `mistral-7b-v0.1.Q4_K_M.gguf` file in the `models/` folder.
 ### 2. PDF data
 Place the desired pdf documents in the `data/` folder.
 
-### 2. Indítás Dockerrel
+### 2. Run with Dockerrel
 Run the project with:
 
 ```bash
