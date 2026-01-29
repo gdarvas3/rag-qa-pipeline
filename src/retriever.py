@@ -1,22 +1,34 @@
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
-def get_retriever():
-    # Embedding modell
-    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-    
-    # Load DB
-    db = Chroma(persist_directory="db/", embedding_function=embeddings)
-    
-    # Retriver
-    # Return top 3 results
-    retriever = db.as_retriever(search_kwargs={"k": 3})
-    return retriever
+class ContextRetriever:
+    """
+    Handles the semantic search and context extraction from the vector database.
+    """
 
-def retrieve_context(query):
-    retriever = get_retriever()
-    relevant_docs = retriever.invoke(query)
-    
-    # Merge context
-    context = "\n\n".join([doc.page_content for doc in relevant_docs])
-    return context
+    def __init__(self, db_dir: str = "db/", embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2'):
+        """
+        Initializes the retriever with a persistent vector store.
+        """
+        self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
+        
+        # Load the existing database from disk
+        self.db = Chroma(
+            persist_directory=db_dir, 
+            embedding_function=self.embeddings
+        )
+
+    def search(self, query: str, k: int = 3) -> str:
+        """
+        Performs a similarity search and returns a concatenated string of the top-k results.
+        """
+        # We use the 'as_retriever' interface for standard LangChain compatibility
+        retriever = self.db.as_retriever(search_kwargs={"k": k})
+        relevant_docs = retriever.invoke(query)
+
+        if not relevant_docs:
+            return ""
+
+        # Join the retrieved segments with double newlines for clear separation in the prompt
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        return context

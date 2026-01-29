@@ -1,90 +1,82 @@
 from llama_cpp import Llama
 from sentence_transformers import SentenceTransformer, util
 
-# --- Model Initialization ---
-
-llm = Llama(
-    model_path="models/Mistral-7B-Instruct-v0.3-Q6_K.gguf",
-    n_ctx=2048,
-    n_threads=4
-)
-
-# Lightweight embedding model for similarity checks
-sim_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-def generate_answer(query, context):
+class RAGEngine:
     """
-    Generates a response using the LLM based on provided context.
-    Uses a standard Instruction template for Mistral models.
+    Core engine for handling RAG-based generation and automated evaluation.
     """
-    prompt = (
-        f"[INST]Answer the question based on the context"
-        f"Context:\n{context}\n\n"
-        f"Question: {query} [/INST]\n"
-        "Answer:"
-    )
-    
-    response = llm(
-        prompt, 
-        stop=["[/INST]", "</s>", "Question:", "Context:"], 
-        echo=False,
-        temperature=0.2,
-        max_tokens=200
-    )
-    
-    answer = response["choices"][0]["text"].strip()
-    return answer
+    def __init__(self, model_path: str, embedding_model_name: str):
+        # Initialize the LLM with specific parameters
+        self.llm = Llama(
+            model_path=model_path,
+            n_ctx=2048,
+            n_threads=4
+        )
+        # Initialize the embedding model for similarity checks
+        self.sim_model = SentenceTransformer(embedding_model_name)
 
-def evaluate_answer(query, context, answer):
-    """
-    LLM-as-a-Judge: Performs a secondary pass where the model acts as an auditor.
-    Checks for alignment with context and assigns a quality score.
-    """
-    eval_prompt = (
-        f"[INST] You are a strict quality auditor. Is the following answer supported by the context? \n"
-        f"1. Rate it 1-5 (5 is best).\n"
-        f"2. Explain why in one sentence.\n\n"
-        f"Context: {context}\n"
-        f"Question: {query}\n"
-        f"AI Answer: {answer} [/INST]\n"
-        f"Evaluation: "
-    )
-    res = llm(eval_prompt, stop=["[/INST]", "</s>"], temperature=0.0, max_tokens=100)
-    return res["choices"][0]["text"].strip()
+    def generate_answer(self, query: str, context: str) -> str:
+        """
+        Generates a response based strictly on the provided context.
+        Uses Mistral-style [INST] tags for optimal instruction following.
+        """
+        prompt = (
+            f"[INST]Answer the question based on the context\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {query} [/INST]\n"
+            "Answer:"
+        )
+        response = self.llm(
+            prompt,
+            stop=["[/INST]", "</s>", "Question:", "Context:"],
+            echo=False,
+            temperature=0.2,
+            max_tokens=200
+        )
+        return response["choices"][0]["text"].strip()
 
+    def evaluate_answer(self, query: str, context: str, answer: str) -> str:
+        """
+        LLM-as-a-Judge: The AI audits its own output.
+        """
+        eval_prompt = (
+            f"[INST] You are a strict quality auditor. Is the following answer supported by the context? \n"
+            f"1. Rate it 1-5 (5 is best).\n"
+            f"If the answer correctly states that the information is NOT present in the context, award a HIGH SCORE (5). This is a successful avoidance of hallucination."
+            f"2. Explain why in one sentence.\n\n"
+            f"Context: {context}\n"
+            f"Question: {query}\n"
+            f"AI Answer: {answer} [/INST]\n"
+            f"Evaluation: "
+        )
+        res = self.llm(eval_prompt, stop=["[/INST]", "</s>"], temperature=0.0, max_tokens=100)
+        return res["choices"][0]["text"].strip()
 
-def get_similarity_score(context, answer):
-    """
-    Calculates the mathematical Cosine Similarity between the context and the answer.
-    Provides a non-LLM based metric to detect semantic drift or grounding.
-    """
-    # Convert text to vector embeddings
-    emb1 = sim_model.encode(context)
-    emb2 = sim_model.encode(answer)
+    def get_similarity_score(self, context: str, answer: str) -> float:
+        """
+        Calculates the cosine similarity between context and answer.
+        """
+        if "no information found" in answer.lower():
+            return 1.0
 
-    # Compute the cosine of the angle between vectors
-    cos_sim = util.cos_sim(emb1, emb2)
-    
-    return float(cos_sim[0][0])
+        emb1 = self.sim_model.encode(context)
+        emb2 = self.sim_model.encode(answer)
+        cos_sim = util.cos_sim(emb1, emb2)
+        return float(cos_sim[0][0])
 
-def final_rag_pipeline(query, context):
-    """
-    Generation and Evaluation.
-    Returns a structured dictionary containing the answer and validation metrics.
-    """
-    # Generate the initial response
-    ans = generate_answer(query, context)
-
-    # Calculate similarity
-    sim = get_similarity_score(context, ans)
-
-    # Perform LLM-based evaluation
-    eval_text = evaluate_answer(query, context, ans)
-    
-    return {
-        "answer": ans,
-        "metrics": {
-            "similarity_score": round(sim, 4),
-            "judge_feedback": eval_text
+    def process_query(self, query: str, context: str) -> dict:
+        """
+        Orchestrates the full RAG pipeline.
+        Returns a dictionary containing the answer and all calculated metrics.
+        """
+        ans = self.generate_answer(query, context)
+        sim = self.get_similarity_score(context, ans)
+        eval_text = self.evaluate_answer(query, context, ans)
+        
+        return {
+            "answer": ans,
+            "metrics": {
+                "similarity_score": round(sim, 4),
+                "judge_feedback": eval_text
+            }
         }
-    }
