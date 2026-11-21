@@ -1,39 +1,60 @@
-from llama_cpp import Llama
+import os
+
+from google import genai
+from google.genai import types
 from sentence_transformers import SentenceTransformer, util
 
 class RAGEngine:
     """
     Core engine for handling RAG-based generation and automated evaluation.
     """
-    def __init__(self, model_path: str, embedding_model_name: str):
-        # Initialize the LLM with specific parameters
-        self.llm = Llama(
-            model_path=model_path,
-            n_ctx=2048,
-            n_threads=4
-        )
+    def __init__(self, embedding_model_name: str, gemini_model: str = "gemini-2.5-flash-lite", api_key: str | None = None):
+        api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is required to use the Gemini model.")
+
+        self.client = genai.Client(api_key=api_key)
+        self.model = gemini_model
+
         # Initialize the embedding model for similarity checks
         self.sim_model = SentenceTransformer(embedding_model_name)
+
+    def _generate_text(self, prompt: str, temperature: float, max_output_tokens: int) -> str:
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            ),
+        )
+
+        if not response.text:
+            raise RuntimeError("Gemini returned an empty response.")
+
+        return response.text.strip()
+
+    @staticmethod
+    def _is_quota_error(error: Exception) -> bool:
+        status_code = getattr(error, "status_code", None)
+        if status_code == 429:
+            return True
+
+        message = str(error).upper()
+        return "RESOURCE_EXHAUSTED" in message or "QUOTA" in message
 
     def generate_answer(self, query: str, context: str) -> str:
         """
         Generates a response based strictly on the provided context.
-        Uses Mistral-style [INST] tags for optimal instruction following.
         """
         prompt = (
-            f"[INST]Answer the question based on the context\n"
+            "You are a precise RAG assistant. Answer only from the provided context. "
+            "If the context does not contain the answer, say that the information is not available in the retrieved documents.\n\n"
             f"Context:\n{context}\n\n"
-            f"Question: {query} [/INST]\n"
+            f"Question: {query}\n"
             "Answer:"
         )
-        response = self.llm(
-            prompt,
-            stop=["[/INST]", "</s>", "Question:", "Context:"],
-            echo=False,
-            temperature=0.2,
-            max_tokens=200
-        )
-        return response["choices"][0]["text"].strip()
+        return self._generate_text(prompt, temperature=0.2, max_output_tokens=200)
 
     def evaluate_answer(self, query: str, context: str, answer: str) -> str:
         """
@@ -46,11 +67,10 @@ class RAGEngine:
             f"2. Explain why in one sentence.\n\n"
             f"Context: {context}\n"
             f"Question: {query}\n"
-            f"AI Answer: {answer} [/INST]\n"
+            f"AI Answer: {answer}\n"
             f"Evaluation: "
         )
-        res = self.llm(eval_prompt, stop=["[/INST]", "</s>"], temperature=0.0, max_tokens=100)
-        return res["choices"][0]["text"].strip()
+        return self._generate_text(eval_prompt, temperature=0.0, max_output_tokens=100)
 
     def get_similarity_score(self, context: str, answer: str) -> float:
         """
@@ -71,7 +91,13 @@ class RAGEngine:
         """
         ans = self.generate_answer(query, context)
         sim = self.get_similarity_score(context, ans)
-        eval_text = self.evaluate_answer(query, context, ans)
+        try:
+            eval_text = self.evaluate_answer(query, context, ans)
+        except Exception as e:
+            if self._is_quota_error(e):
+                eval_text = "Evaluation skipped due to Gemini quota limits."
+            else:
+                raise
         
         return {
             "answer": ans,

@@ -1,12 +1,12 @@
 # RAG Q&A Pipeline
 
-This repository contains a fully local Retrieval-Augmented Generation (RAG) pipeline. It allows users to query private PDF documents. 
+This repository contains a Retrieval-Augmented Generation (RAG) pipeline for querying private PDF documents with Gemini-based generation. 
 
 ---
 
 ## Stack
 
-* **LLM: [Mistral-7B-Instruct-v0.3-Q6_K.gguf](https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF)**
+* **LLM: Gemini Flash via Google AI Studio**
 * **Vector database: ChromaDB** 
 * **Frontend: Streamlit** 
 * **Backend: Fast API**
@@ -16,13 +16,19 @@ This repository contains a fully local Retrieval-Augmented Generation (RAG) pipe
 
 
 
-### 1. Model
-Place `mistral-7b-v0.1.Q4_K_M.gguf` file in the `models/` folder.
+### 1. Gemini API key
+Create a Google AI Studio API key and set `GEMINI_API_KEY` in your environment or in a local `.env` file.
+
+Optional: set `GEMINI_MODEL` if you want a different Gemini model name. The default is `gemini-2.0-flash`.
 
 ### 2. PDF data
 Place the desired pdf documents in the `data/` folder.
 
-### 3. Run with Docker
+### 3. LlamaParse key (recommended for GraphRAG/complex PDFs)
+Set `LLAMA_CLOUD_API_KEY` in `app.env` (or `.env`) so ingestion uses LlamaParse markdown extraction.
+If LlamaParse is unavailable, the pipeline falls back to local PyPDF parsing.
+
+### 4. Run with Docker
 Run the project with:
 
 ```bash
@@ -50,15 +56,15 @@ docker-compose up --build
 
 ---
 ## Pipline architecture
-1. **Document Loading:** PDF files are parsed using `pypdf`.
+1. **Document Loading:** PDF files are parsed with LlamaParse (Markdown output) and fallback to `pypdf` if needed.
 2. **Chunking:** Text is split into 500-character segments with a 50-character overlap.
 3. **Embedding:** Chunks are mapped into 384-dimensional vector space using the `all-MiniLM-L6-v2` model.
 4. **Indexing:** Vectors and metadata are stored in a `ChromaDB` instance for fast retrieval.
 5. **User Query:** The query is submitted via the Streamlit UI and sent to the FastAPI backend.
 6. **Semantic Search:** The query is embedded, and a similarity search retrieves the **Top-K (3)** most relevant chunks from ChromaDB.
 7. **Prompt Engineering:** A structured prompt is constructed, combining the retrieved context with a system instruction.
-8. **Generation:** The LLM model generates the final answer based *only* on the provided context.
+8. **Generation:** Gemini generates the final answer based *only* on the provided context.
 9. **Similarity Validation:** The system calculates a final **Similarity Score** between the generated answer and the source document chunks.
 10. **Reliability Check:** Based on the score and the presence of source material, the system assigns a **Reliability Status** (e.g., "Reliable" vs "Unreliable").
-11 **Judge Feedback:** In the `evaluate_answer` function the same LLM is used to generate an evaluation based on the context, the query and the answer.
+11. **Judge Feedback:** In the `evaluate_answer` function the same Gemini model is used to generate an evaluation based on the context, the query and the answer.
 ---

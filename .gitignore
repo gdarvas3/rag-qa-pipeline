@@ -28,3 +28,5 @@ data/*.pdf
 .env
 .DS_Store
 Thumbs.db
+# Local secrets
+app.env
